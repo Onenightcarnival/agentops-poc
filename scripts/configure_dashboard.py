@@ -46,12 +46,11 @@ def main():
             "value": ONLINE_SCORE_NAMES,
             "type": "stringOptions",
         },
-        {"column": "source", "operator": "any of", "value": ["EVAL"], "type": "stringOptions"},
     ]
     definitions = [
         {
             "name": "Langfuse 自动评估 · 指标均分",
-            "description": "Langfuse 自动执行任务完成度、正确性和指令遵循度评估；0～1，越高越好，仅统计 EVAL 来源。",
+            "description": "Langfuse 自动执行任务完成度、正确性和指令遵循度评估；0～1，越高越好，按专用 online_* 指标名筛选。",
             "view": "scores-numeric",
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "value", "agg": "avg"}],
@@ -151,6 +150,18 @@ def main():
             return response.json()
 
         existing = call("GET", "dashboard-widgets")["data"]
+        # The 4.16 editor cannot render Score Source, although Metrics API accepts it.
+        # Also repair the retired pilot card, which remains accessible in Widgets.
+        for widget in existing:
+            if widget["name"] == "Langfuse 自动评估 · 任务完成度":
+                call(
+                    "PATCH",
+                    f"dashboard-widgets/{widget['id']}",
+                    json={
+                        "filters": [f for f in widget["filters"] if f["column"] != "source"],
+                        "description": "试点历史卡片：按 online_task_success 专用指标名统计任务完成度，0～1，越高越好。",
+                    },
+                )
         by_name = {w["name"]: w for w in existing}
         added = []
         for definition in definitions:

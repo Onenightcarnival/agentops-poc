@@ -124,7 +124,11 @@ uv run --locked python -m scripts.configure_dashboard
 ```
 
 校验报告保存为 `artifacts/online-evaluation-smoke-demo-002.json`。
-看板展示三项自动评估的均分、趋势、各指标样本数，限定 `source=EVAL`。
+看板展示三项自动评估的均分、趋势、各指标样本数，使用三个专用 `online_*` 指标名筛选。
+Langfuse 4.16 的统计 API 支持 `source=EVAL`，但 widget 编辑器未提供 Score Source，
+保存该条件会出现 Unsupported filters，编辑时还会丢弃条件，因此 widget 不保存它。
+`online_*` 名称仅供自动评估使用；`scripts.verify_langfuse` 会检查这些名称下的分数均来自 EVAL，
+防止手工/API 同名评分混入。该校验是检测措施，不能阻止其他调用方写入同名分数。
 旧版 `llm_*` 分数留在 Langfuse 历史记录中，不参与当前自动评估卡片统计。
 原本的本地模型调用脚本、评分实现、专属测试和 `JUDGE_MODEL_*` 示例配置已清理；
 独立规则评估、真实请求脚本和只读验证工具仍可使用。

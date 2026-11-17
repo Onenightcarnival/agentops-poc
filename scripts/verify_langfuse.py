@@ -113,6 +113,12 @@ def main():
             {"column": "source", "operator": "any of", "value": ["EVAL"], "type": "stringOptions"},
         ],
     }
+    # Widget editor uses names only; detect any accidental API/manual scores reusing them.
+    queries["online_score_sources"] = {
+        **queries["online_scores"],
+        "dimensions": [{"field": "name"}, {"field": "source"}],
+        "filters": [f for f in queries["online_scores"]["filters"] if f["column"] != "source"],
+    }
     with httpx.Client(
         base_url=os.environ["LANGFUSE_BASE_URL"],
         auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
@@ -169,6 +175,9 @@ def main():
         assert any(r["name"] == "task_success" for r in report["scores"]), "scores missing"
         assert {r["name"] for r in report["online_scores"]} == set(ONLINE_SCORE_NAMES), (
             "native model evaluation metrics missing"
+        )
+        assert all(r["source"] == "EVAL" for r in report["online_score_sources"]), (
+            "Reserved online_* score names contain non-EVAL scores; dashboard would mix sources"
         )
         print("PASS: Langfuse ingested users, token usage, native tool counts and Agent scores")
 
