@@ -112,7 +112,6 @@ def main():
             expected = row["reference"].get("expected_skill")
             if expected:
                 assert any(r["name"] == expected for r in triggers)
-            assert not any(r["type"] == "EVENT" for r in observations), "Custom event found"
             if args.assert_unscored:
                 assert not scores(api, trace_id), "Serving unexpectedly wrote scores"
             row["telemetry"] = {

@@ -20,7 +20,44 @@ def main():
         {"column": "type", "operator": "any of", "value": ["TOOL"], "type": "stringOptions"},
         {"column": "version", "operator": "any of", "value": ["0.6.0"], "type": "stringOptions"},
     ]
+    skill_filter = [
+        {"column": "type", "operator": "any of", "value": ["EVENT"], "type": "stringOptions"},
+        {
+            "column": "metadata",
+            "key": "kind",
+            "operator": "=",
+            "value": "skill_trigger",
+            "type": "stringObject",
+        },
+        {
+            "column": "metadata",
+            "key": "instrumentation",
+            "operator": "=",
+            "value": "skill-trigger-v3",
+            "type": "stringObject",
+        },
+    ]
     definitions = [
+        {
+            "name": "SKILL 调用次数 · Top 20",
+            "description": "原生 SKILL.md 读取触发次数，按技能名称分组；重复读取计多次，不代表执行成功。仅统计 skill-trigger-v3 EVENT。",
+            "view": "observations",
+            "dimensions": [{"field": "name"}],
+            "metrics": [{"measure": "count", "agg": "count"}],
+            "filters": skill_filter,
+            "chartType": "HORIZONTAL_BAR",
+            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+        },
+        {
+            "name": "SKILL 调用次数 · 趋势",
+            "description": "按技能分组的触发次数时间趋势，只统计触发，不统计耗时或成功率。",
+            "view": "observations",
+            "dimensions": [{"field": "name"}],
+            "metrics": [{"measure": "count", "agg": "count"}],
+            "filters": skill_filter,
+            "chartType": "LINE_TIME_SERIES",
+            "chartConfig": {"type": "LINE_TIME_SERIES"},
+        },
         {
             "name": "用户 Token 用量 · 按用户",
             "description": "真实 GENERATION Token 总量，按 userId 分组；不依赖模型价格配置。",
@@ -33,7 +70,7 @@ def main():
         },
         {
             "name": "原生工具调用次数 · 按工具",
-            "description": "Callback 自动记录的原生工具调用次数。read_file 包含技能文档和其他文件；按技能名统计使用独立 skill_usage 脚本。",
+            "description": "Callback 自动记录的原生工具调用次数。read_file 包含技能文档和其他文件；SKILL 触发次数见专用卡片。",
             "view": "observations",
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "agg": "count"}],
@@ -86,11 +123,7 @@ def main():
         dashboard = call("GET", f"dashboards/{DASHBOARD_ID}")
         placements = dashboard["definition"]["widgets"]
         # Remove obsolete skill timing and the unfiltered preset exposing old skill scores.
-        obsolete = {
-            w["id"]
-            for w in existing
-            if w["name"] in {"SKILL 耗时 · P95", "SKILL 调用次数 · Top 20"}
-        }
+        obsolete = {w["id"] for w in existing if w["name"] == "SKILL 耗时 · P95"}
         placements = [
             p
             for p in placements
@@ -108,6 +141,8 @@ def main():
         all_widgets = existing + added
         id_to_name = {w["id"]: w["name"] for w in all_widgets}
         order = [
+            "SKILL 调用次数 · Top 20",
+            "SKILL 调用次数 · 趋势",
             "用户 Token 用量 · 按用户",
             "原生工具调用次数 · 按工具",
             "模型调用次数 · 按模型",
@@ -130,7 +165,7 @@ def main():
             "PATCH",
             f"dashboards/{DASHBOARD_ID}",
             json={
-                "description": "DeepAgents 0.6.2 + FastAPI + SQLite：单文件原生Agent：用户Token、模型与工具调用、独立Agent评估。SKILL分组由离线查询提供。",
+                "description": "DeepAgents 0.6.2 原生Agent：SKILL触发次数、用户Token、模型与工具调用、独立Agent评估。SKILL只计次数。",
                 "definition": {"widgets": placements},
             },
         )

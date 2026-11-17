@@ -1,7 +1,7 @@
 # AgentOps POC
 
 DeepAgents **0.6.2** + FastAPI + SQLite checkpoint；依赖使用 uv，格式化使用 Ruff。
-服务实现只有 `app/main.py`，没有 AgentService、应用层 middleware、技能执行器或遥测封装。
+服务实现只有 `app/main.py`。额外的函数式 middleware 只记录 SKILL 触发，不实现技能加载或执行。
 
 ## 启动
 
@@ -37,8 +37,9 @@ uv run --locked python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 
 ## Langfuse 接入
 
-服务里只使用 `get_client()`、官方 `CallbackHandler` 和一处 `with propagate_attributes(...)`。
-没有手工 span.update、create_event、评分、ContextVar 或自定义 trace 生命周期。
+请求链路使用 `get_client()`、Langfuse `CallbackHandler` 和一处 `with propagate_attributes(...)`。
+CallbackHandler 只扩展 `on_tool_start`：先调用官方实现创建工具 span，再为带 SKILL 标记的调用写入一次 EVENT。
+没有手工 span.update、评分、ContextVar 或自定义 trace 生命周期。
 根 Agent 输入输出、模型用量、原生工具调用及错误均由 callback 自动记录。
 `get_client()` 用于 SDK 生命周期管理及本地 flush 辅助接口。
 
@@ -52,18 +53,29 @@ uv run --locked python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 没有自定义 run_skill、技能加载器或注册表。
 两个 demo 是纯指令工作流；金额与文本计算不是 Python 程序级确定性验证。
 
-为保持服务无侵入，**不再额外上报 SKILL EVENT**。独立只读脚本从 callback 的根输出 skills_metadata
-和 read_file 工具输入匹配技能，统计每个技能文档的读取调用次数：
+`@wrap_tool_call` 定义的 `skill_triggers` 使用框架提供的 `skills_metadata`，匹配原生
+`read_file` 的 `file_path`。匹配后只给本次工具调用的 config.metadata 添加 `skill_trigger` 标记，
+随后原样传递请求和返回结果。普通文件读取不计入 SKILL。
+
+middleware 入口处尚未创建 read_file span，因此 EVENT 在 `on_tool_start` 中、官方 handler
+创建并激活工具 span 后写入，自动成为该 read_file 的子节点。无需读取 SDK 私有字段或手动指定 trace/parent ID。
+`tool_call_id` 防止标记被嵌套调用误用，并用于父子关系核对。事件只记录触发时点及识别元数据。
+
+口径是**每次请求读取已发现的技能文档计 1 次**：重复读取计多次，读取失败也计触发，
+复用会话中已有指令不额外计数；不统计技能执行耗时或成功率。
+看板通过 `EVENT + metadata.kind=skill_trigger + metadata.instrumentation=skill-trigger-v3`
+筛选，按 observation name 分组做 Count，展示 Top 20 和时间趋势；旧版实验事件不参与计数。
+
+独立只读脚本仍可从 callback 的根输出和原生工具输入交叉核对：
 
 ```powershell
 uv run python -m scripts.skill_usage --manifest artifacts/smoke-demo-001.json
+uv run python -m scripts.verify_skill_events --manifest artifacts/smoke-demo-001.json
 ```
 
-结果保存为 `artifacts/skill-usage-smoke-demo-001.json`。重复读取计多次，复用会话中的指令不额外计数；
-只统计触发，不统计技能执行耗时或成功率。
-看板展示原生工具调用次数，read_file 也可能包含非技能文件，不能直接视为 SKILL 次数。
-本地 Langfuse 当前指标视图无法直接按工具 input 中的技能路径分组，因此按技能名统计保留在独立查询报告。
-旧的自定义 SKILL 卡片已从看板移除，历史数据仍保留。
+校验原生读取与 EVENT 一一对应、parentObservationId 指向实际 read_file、trace/user/session 关联正确、事件起止时间相同，
+并通过 Langfuse Metrics API 验证同批 trace 的看板统计结果。
+配置可重复运行：`uv run python -m scripts.configure_dashboard`。
 
 ## 请求与独立评估
 

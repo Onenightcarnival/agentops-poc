@@ -58,7 +58,7 @@ def main():
             ],
             "orderBy": [{"field": "avg_value", "direction": "desc"}],
         },
-        "tool_calls": {
+        "skill_triggers": {
             "view": "observations",
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "aggregation": "count"}],
@@ -76,14 +76,29 @@ def main():
                     "value": "skill_trigger",
                     "type": "stringObject",
                 },
+                {
+                    "column": "metadata",
+                    "key": "instrumentation",
+                    "operator": "=",
+                    "value": "skill-trigger-v3",
+                    "type": "stringObject",
+                },
             ],
             "orderBy": [{"field": "count_count", "direction": "desc"}],
         },
     }
-    queries["tool_calls"]["filters"] = [
-        {"column": "type", "operator": "any of", "value": ["TOOL"], "type": "stringOptions"},
-        {"column": "version", "operator": "any of", "value": ["0.6.0"], "type": "stringOptions"},
-    ]
+    queries["tool_calls"] = {
+        **queries["skill_triggers"],
+        "filters": [
+            {"column": "type", "operator": "any of", "value": ["TOOL"], "type": "stringOptions"},
+            {
+                "column": "version",
+                "operator": "any of",
+                "value": ["0.6.0"],
+                "type": "stringOptions",
+            },
+        ],
+    }
     with httpx.Client(
         base_url=os.environ["LANGFUSE_BASE_URL"],
         auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
@@ -136,6 +151,7 @@ def main():
         assert len(report["user_usage"]) >= 3, "three users not ingested yet"
         assert all(r["userId"] for r in report["requests"]), "root user attribution missing"
         assert report["tool_calls"], "native tool observations missing"
+        assert report["skill_triggers"], "SKILL trigger events missing"
         assert any(r["name"] == "task_success" for r in report["scores"]), "scores missing"
         print("PASS: Langfuse ingested users, token usage, native tool counts and Agent scores")
 

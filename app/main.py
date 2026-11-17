@@ -14,15 +14,52 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
+from langchain.agents.middleware import wrap_tool_call
 from langchain_openai import ChatOpenAI
 from langfuse import get_client, propagate_attributes
-from langfuse.langchain import CallbackHandler
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, ConfigDict, Field
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 langfuse = get_client()
+
+
+class CallbackHandler(LangfuseCallbackHandler):
+    def on_tool_start(self, *args, **kwargs):
+        super().on_tool_start(*args, **kwargs)
+        trigger = (kwargs.get("metadata") or {}).get("skill_trigger")
+        if trigger and trigger["tool_call_id"] == kwargs.get("tool_call_id"):
+            # The official handler has just activated this read_file observation.
+            langfuse.create_event(name=f"skill:{trigger['skill_name']}", metadata=trigger)
+
+
+@wrap_tool_call
+async def skill_triggers(request, handler):
+    """Count native SKILL.md read requests; leave loading and execution untouched."""
+    call = request.tool_call
+    if call["name"] == "read_file":
+        skill = next(
+            (
+                s
+                for s in request.state.get("skills_metadata", [])
+                if s["path"] == call["args"].get("file_path")
+            ),
+            None,
+        )
+        if skill is not None:
+            request.runtime.config["metadata"] = {
+                **request.runtime.config.get("metadata", {}),
+                "skill_trigger": {
+                    "kind": "skill_trigger",
+                    "skill_name": skill["name"],
+                    "skill_path": skill["path"],
+                    "tool_call_id": call["id"],
+                    "instrumentation": "skill-trigger-v3",
+                },
+            }
+    return await handler(request)
 
 
 @asynccontextmanager
@@ -43,6 +80,7 @@ async def lifespan(app: FastAPI):
             backend=FilesystemBackend(root_dir=str(ROOT / "agent_workspace"), virtual_mode=True),
             permissions=[FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
             skills=["/skills/"],
+            middleware=[skill_triggers],
             checkpointer=saver,
         )
         (ROOT / "logs").mkdir(exist_ok=True)
