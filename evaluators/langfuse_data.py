@@ -10,6 +10,11 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+ONLINE_SCORE_NAMES = [
+    "online_task_success",
+    "online_correctness",
+    "online_instruction_following",
+]
 
 
 def api_client():

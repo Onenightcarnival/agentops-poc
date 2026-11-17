@@ -79,7 +79,7 @@ uv run python -m scripts.verify_skill_events --manifest artifacts/smoke-demo-001
 ## 请求与独立评估
 
 ```powershell
-uv run python -m scripts.smoke --run-id demo-001 --assert-unscored
+uv run python -m scripts.smoke --run-id demo-001
 uv run python -m scripts.evaluate --manifest artifacts/smoke-demo-001.json --dry-run
 uv run python -m scripts.evaluate --manifest artifacts/smoke-demo-001.json
 uv run python -m scripts.verify_evaluation --report artifacts/evaluation-smoke-demo-001.json
@@ -97,44 +97,75 @@ smoke 测试原生流、checkpoint 记忆、用户隔离、技能加载，并从
 这些是规则检查，不是 LLM judge；技能读取不等于执行成功。
 评分使用稳定 ID 写回，版本为 offline-rules-v4。同样 manifest 重跑不会重复计分。
 
-## 独立模型评估
+## Langfuse 自动模型评估
 
-`scripts.evaluate_llm` 直接从 Langfuse 读取已完成请求，用模型评估当前轮的用户请求、回答、
-历史上下文和原生工具输入输出。manifest 只提供 trace ID 和可选参考要求；不使用其中缓存的回答。
-服务代码及请求链路不参与评估，也不重跑 Agent。
-
-```powershell
-# 调用模型生成评估报告，暂不写回；也会保存模型结果缓存
-uv run python -m scripts.evaluate_llm --manifest artifacts/smoke-demo-001.json --dry-run
-# 使用已验证的缓存结果，写回 Agent 根 observation 的 Scores
-uv run python -m scripts.evaluate_llm --manifest artifacts/smoke-demo-001.json
-uv run python -m scripts.verify_evaluation --report artifacts/llm-evaluation-smoke-demo-001.json --check-metrics
-uv run python -m scripts.configure_dashboard
-# 也可直接评估现有 trace，无需 manifest 或参考答案
-uv run python -m scripts.evaluate_llm --trace-id YOUR_TRACE_ID
-```
-
-默认复用 `.env` 的 `MODEL_*`；可通过 `JUDGE_MODEL_NAME`、`JUDGE_MODEL_BASE_URL`、
-`JUDGE_MODEL_API_KEY` 分别覆盖。judge 调用不接 Agent 的 Langfuse callback，因此不混入线上模型用量。
-评估模型的 Token 用量保存在本地缓存和分数 metadata 中。
+三项模型评估已迁移到 Langfuse Evaluators，由 Langfuse worker 异步调用模型、写回分数。
+Agent 服务不执行评分，也不需要本地批量调用模型的脚本。
 
 | 分数名称 | 含义 |
 | --- | --- |
-| `llm_task_success` | 是否完成用户实际目标，合理拒绝无效输入也可以满分 |
-| `llm_correctness` | 回答及计算是否有输入、历史或工具证据支持 |
-| `llm_instruction_following` | 是否遵循用户约束及适用技能指令、保留原始输入 |
+| `online_task_success` | 当前请求的任务完成度；合理拒绝无效输入也可满分 |
+| `online_correctness` | 计算、文本统计及陈述是否有原始输入、历史或工具证据支持 |
+| `online_instruction_following` | 是否遵循用户约束和可见技能指令，保留原始输入 |
 
-均为 0～1 分，越高越好；每项中文评分依据写入 score comment。
-评分标准、结构校验和证据提取位于 `evaluators/llm.py`。模型输出缺项、非数字或越界时终止；
-全部请求评估通过后才写回。证据超过 `--max-input-chars`（默认 120000）时明确报错，不静默截断。
+三个评估器均 Active，100% 采样新的 `agentops.chat` 根 observation，排除 Langfuse 内部环境。
+`input` 变量映射 Input，`output` 映射 Output，JsonPath 留空。根输出的原生消息包含历史与工具结果；
+提示词要求只评估当前轮最终回答，历史仅供参考，不把读取 SKILL 当作执行成功。
+均为 Numeric 0～1 分，中文评分依据写入 score comment，来源为 `EVAL`，关联实际 Agent 根节点。
+任务配置、提示词和默认模型均在
+[Langfuse Evaluators](http://localhost:13000/project/cmwk7bi2e0006rm07849pgu6a/evals) 管理。
 
-结果缓存位于 `artifacts/llm-judge-cache`；相同 trace、证据、参考要求、模型及评估标准生成稳定 ID，
-重跑复用缓存且不会增加重复评分。`--refresh` 重新调用模型并覆盖同一组分数；修改模型或评估标准会生成
-新的评估记录，此时看板同名指标会包含这些记录。缓存和报告不提交 Git。
+```powershell
+# 发送真实请求，Langfuse 在后台自动评分，不再单独运行模型评估脚本
+uv run --locked python -m scripts.smoke --run-id demo-002
+# 只读：等待三个自动分数，核对根节点、范围、重复记录及看板均值/样本数
+uv run --locked python -m scripts.verify_online_evaluation --manifest artifacts/smoke-demo-002.json
+uv run --locked python -m scripts.configure_dashboard
+```
 
-看板新增模型评估的均分、均分趋势和各指标样本数，单独展示 `llm_*`；原规则评估卡片仍保留。
-趋势按 Agent 请求发生时间聚合，样本数只表示已评估请求。模型评分是启发式判断；POC 默认使用
-同一个模型执行和评估，后续可替换独立 judge 模型并用人工标注校准。
+校验报告保存为 `artifacts/online-evaluation-smoke-demo-002.json`。
+看板展示三项自动评估的均分、趋势、各指标样本数，限定 `source=EVAL`。
+旧版 `llm_*` 分数留在 Langfuse 历史记录中，不参与当前自动评估卡片统计。
+原本的本地模型调用脚本、评分实现、专属测试和 `JUDGE_MODEL_*` 示例配置已清理；
+独立规则评估、真实请求脚本和只读验证工具仍可使用。
+
+新配置只自动评估启用后的请求，不会自动补评历史 trace。评估错误可在各 Evaluator 的 Logs 查看；
+没有有效结果的任务不会伪造成功分数。原本本地 manifest 的可选参考答案不会自动传入在线评估，
+需要参考答案时应另建数据集评估并明确变量映射。
+同模型执行和评分只是 POC，需用人工标注或独立 judge 模型继续校准。
+
+## Langfuse 内置评估的 JSON 适配服务
+
+`json_adapter.py` 是独立 FastAPI 服务，Agent 的 `app/main.py` 不依赖它。
+调用链是：Langfuse → `18081` JSON 适配服务 → `23333` 原模型网关。
+适配服务复用 `.env` 中的 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME`，
+入口也使用同一 API Key 鉴权；Agent 继续直接访问原模型网关。
+
+```powershell
+uv sync --locked
+.\scripts\adapter.ps1 start
+.\scripts\adapter.ps1 status
+.\scripts\adapter.ps1 stop
+# 或前台启动
+uv run --locked python -m uvicorn json_adapter:app --host 127.0.0.1 --port 18081
+```
+
+Langfuse LLM Connections 中的 `local-debug-model` 使用 openai adapter，Base URL 为
+`http://host.docker.internal:18081/v1`，模型为 `openai-codex:gpt-6-astra`，关闭 Responses API。
+Docker 内的 Langfuse web 和 worker 均需允许 `host.docker.internal`：
+`LANGFUSE_LLM_CONNECTION_WHITELISTED_HOST=host.docker.internal`。
+当前机器已配置；适配服务须与 Langfuse 一起运行。日志位于 `logs/adapter.*.log`。
+
+支持 `/v1/models` 和非流式 `/v1/chat/completions`。针对 `response_format.json_schema`，
+将 Schema 写入提示词，并使用 jsonschema 严格校验返回值；错误时携带校验信息重试，
+总共最多三次。拒绝无效类型、越界、NaN 和远程 Schema 引用，不自动转换分数或补默认值。
+仍不合格时返回 502，让 Langfuse 显示评估失败；成功响应的 Token 用量合计所有尝试。
+这属于提示词加校验重试，不能保证上游每次都生成合法 JSON，不支持流式或工具调用。
+
+自动评分依赖本服务持续运行。启用后 smoke 命令不要传 `--assert-unscored`。
+本次 `native-evals-all-v2` 的 5 个真实请求用于验证三项评估和看板统计。
+已验证 15 条自动评分，每项 5 条，均关联实际 Agent 根节点，Metrics API 的均值和样本数一致。
+任务完成度另保留试点阶段的 5 条自动评分，因此当前看板该指标总样本数为 10。
 
 ## 检查
 

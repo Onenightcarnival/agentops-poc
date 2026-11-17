@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from evaluators.llm import SCORE_NAMES
+from evaluators.langfuse_data import ONLINE_SCORE_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -101,10 +101,16 @@ def main():
             },
         ],
     }
-    queries["llm_scores"] = {
+    queries["online_scores"] = {
         **queries["scores"],
         "filters": [
-            {"column": "name", "operator": "any of", "value": SCORE_NAMES, "type": "stringOptions"}
+            {
+                "column": "name",
+                "operator": "any of",
+                "value": ONLINE_SCORE_NAMES,
+                "type": "stringOptions",
+            },
+            {"column": "source", "operator": "any of", "value": ["EVAL"], "type": "stringOptions"},
         ],
     }
     with httpx.Client(
@@ -161,6 +167,9 @@ def main():
         assert report["tool_calls"], "native tool observations missing"
         assert report["skill_triggers"], "SKILL trigger events missing"
         assert any(r["name"] == "task_success" for r in report["scores"]), "scores missing"
+        assert {r["name"] for r in report["online_scores"]} == set(ONLINE_SCORE_NAMES), (
+            "native model evaluation metrics missing"
+        )
         print("PASS: Langfuse ingested users, token usage, native tool counts and Agent scores")
 
 
