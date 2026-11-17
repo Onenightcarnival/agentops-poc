@@ -69,7 +69,6 @@ middleware 入口处尚未创建 read_file span，因此 EVENT 在 `on_tool_star
 独立只读脚本仍可从 callback 的根输出和原生工具输入交叉核对：
 
 ```powershell
-uv run python -m scripts.skill_usage --manifest artifacts/smoke-demo-001.json
 uv run python -m scripts.verify_skill_events --manifest artifacts/smoke-demo-001.json
 ```
 
