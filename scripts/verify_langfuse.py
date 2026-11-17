@@ -8,6 +8,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from evaluators.llm import SCORE_NAMES
+
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
@@ -97,6 +99,12 @@ def main():
                 "value": ["0.6.0"],
                 "type": "stringOptions",
             },
+        ],
+    }
+    queries["llm_scores"] = {
+        **queries["scores"],
+        "filters": [
+            {"column": "name", "operator": "any of", "value": SCORE_NAMES, "type": "stringOptions"}
         ],
     }
     with httpx.Client(

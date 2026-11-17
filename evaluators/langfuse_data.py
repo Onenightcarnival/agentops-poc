@@ -45,7 +45,7 @@ def observations(client, trace_id):
 
 def scores(client, trace_id):
     rows = []
-    params = {"traceId": trace_id, "limit": 100, "fields": "core,subject"}
+    params = {"traceId": trace_id, "limit": 100, "fields": "core,subject,details"}
     while True:
         response = client.get("/api/public/v3/scores", params=params)
         response.raise_for_status()

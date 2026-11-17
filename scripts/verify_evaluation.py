@@ -2,7 +2,10 @@
 
 import argparse
 import json
+import math
 import time
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from evaluators.langfuse_data import api_client, scores
@@ -11,6 +14,11 @@ from evaluators.langfuse_data import api_client, scores
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument(
+        "--check-metrics",
+        action="store_true",
+        help="Also compare dashboard counts and averages for this batch",
+    )
     args = parser.parse_args()
     expected = json.loads(args.report.read_text(encoding="utf-8"))
     trace_ids = {s["trace_id"] for s in expected}
@@ -25,7 +33,8 @@ def main():
             if time.monotonic() >= deadline:
                 raise TimeoutError("Offline scores not visible in Langfuse")
             time.sleep(2)
-    assert len(actual) == len(expected), "Unexpected/duplicate scores on the evaluated traces"
+    assert len(expected_by_id) == len(expected), "Duplicate score IDs in report"
+    assert sum(s["id"] in expected_by_id for s in actual) == len(expected), "Duplicate scores"
     for score_id, item in expected_by_id.items():
         actual_score = by_id[score_id]
         assert actual_score["name"] == item["name"]
@@ -34,6 +43,50 @@ def main():
         assert subject["kind"] == "observation"
         assert subject["id"] == item["observation_id"]
         assert subject["traceId"] == item["trace_id"]
+        assert actual_score.get("comment") == item["comment"]
+        for key, value in item.get("metadata", {}).items():
+            assert actual_score.get("metadata", {}).get(key) == value
+    if args.check_metrics:
+        grouped = defaultdict(list)
+        for item in expected:
+            grouped[item["name"]].append(item["value"])
+        now = datetime.now(UTC)
+        query = {
+            "view": "scores-numeric",
+            "dimensions": [{"field": "name"}],
+            "metrics": [
+                {"measure": "value", "aggregation": "avg"},
+                {"measure": "count", "aggregation": "count"},
+            ],
+            "filters": [
+                {
+                    "column": "name",
+                    "operator": "any of",
+                    "value": list(grouped),
+                    "type": "stringOptions",
+                },
+                {
+                    "column": "traceId",
+                    "operator": "any of",
+                    "value": list(trace_ids),
+                    "type": "stringOptions",
+                },
+            ],
+            "fromTimestamp": min(s["timestamp"] for s in expected),
+            "toTimestamp": (now + timedelta(minutes=1)).isoformat(),
+            "timeDimension": None,
+            "config": {"row_limit": 100},
+        }
+        with api_client() as api:
+            response = api.get("/api/public/v2/metrics", params={"query": json.dumps(query)})
+            response.raise_for_status()
+            metrics = response.json()["data"]
+        assert {r["name"] for r in metrics} == set(grouped)
+        for row in metrics:
+            values = grouped[row["name"]]
+            assert int(row["count_count"]) == len(values)
+            assert math.isclose(row["avg_value"], sum(values) / len(values), abs_tol=1e-8)
+        print(json.dumps({"dashboard_metrics": metrics}, ensure_ascii=False, indent=2))
     print(
         f"PASS: {len(expected)} unique scores on {len(trace_ids)} traces; values and observation IDs match"
     )

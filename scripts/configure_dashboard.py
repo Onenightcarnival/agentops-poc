@@ -7,6 +7,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from evaluators.llm import SCORE_NAMES
+
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 DASHBOARD_ID = "cmwk7cpv80009rm07f8ib2kc9"
@@ -38,6 +40,57 @@ def main():
         },
     ]
     definitions = [
+        {
+            "name": "Agent 模型评估 · 指标均分",
+            "description": "独立 LLM judge：任务完成度、正确性、指令遵循度；0～1，越高越好。评分依据见各 trace 的 Scores。",
+            "view": "scores-numeric",
+            "dimensions": [{"field": "name"}],
+            "metrics": [{"measure": "value", "agg": "avg"}],
+            "filters": [
+                {
+                    "column": "name",
+                    "operator": "any of",
+                    "value": SCORE_NAMES,
+                    "type": "stringOptions",
+                }
+            ],
+            "chartType": "HORIZONTAL_BAR",
+            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+        },
+        {
+            "name": "Agent 模型评估 · 均分趋势",
+            "description": "按 Agent 请求发生时间展示 LLM judge 各指标均分；独立于规则评分。",
+            "view": "scores-numeric",
+            "dimensions": [{"field": "name"}],
+            "metrics": [{"measure": "value", "agg": "avg"}],
+            "filters": [
+                {
+                    "column": "name",
+                    "operator": "any of",
+                    "value": SCORE_NAMES,
+                    "type": "stringOptions",
+                }
+            ],
+            "chartType": "LINE_TIME_SERIES",
+            "chartConfig": {"type": "LINE_TIME_SERIES"},
+        },
+        {
+            "name": "Agent 模型评估 · 各指标样本数",
+            "description": "每个请求每项指标一条模型评分；样本为已完成独立评估的请求，不代表全部线上流量。",
+            "view": "scores-numeric",
+            "dimensions": [{"field": "name"}],
+            "metrics": [{"measure": "count", "agg": "count"}],
+            "filters": [
+                {
+                    "column": "name",
+                    "operator": "any of",
+                    "value": SCORE_NAMES,
+                    "type": "stringOptions",
+                }
+            ],
+            "chartType": "HORIZONTAL_BAR",
+            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+        },
         {
             "name": "SKILL 调用次数 · Top 20",
             "description": "原生 SKILL.md 读取触发次数，按技能名称分组；重复读取计多次，不代表执行成功。仅统计 skill-trigger-v3 EVENT。",
@@ -80,7 +133,7 @@ def main():
         },
         {
             "name": "Agent 评估 · 各指标均值趋势",
-            "description": "独立 Agent 评估：task_success、quality、response_nonempty；不包含历史 skill_success。",
+            "description": "独立规则评估：task_success、quality、response_nonempty；不包含模型评分或历史 skill_success。",
             "view": "scores-numeric",
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "value", "agg": "avg"}],
@@ -141,6 +194,9 @@ def main():
         all_widgets = existing + added
         id_to_name = {w["id"]: w["name"] for w in all_widgets}
         order = [
+            "Agent 模型评估 · 指标均分",
+            "Agent 模型评估 · 均分趋势",
+            "Agent 模型评估 · 各指标样本数",
             "SKILL 调用次数 · Top 20",
             "SKILL 调用次数 · 趋势",
             "用户 Token 用量 · 按用户",
@@ -165,7 +221,7 @@ def main():
             "PATCH",
             f"dashboards/{DASHBOARD_ID}",
             json={
-                "description": "DeepAgents 0.6.2 原生Agent：SKILL触发次数、用户Token、模型与工具调用、独立Agent评估。SKILL只计次数。",
+                "description": "DeepAgents 0.6.2 原生Agent：独立模型及规则评估、SKILL触发次数、用户Token、模型与工具调用。SKILL只计次数。",
                 "definition": {"widgets": placements},
             },
         )

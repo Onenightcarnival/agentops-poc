@@ -98,6 +98,45 @@ smoke 测试原生流、checkpoint 记忆、用户隔离、技能加载，并从
 这些是规则检查，不是 LLM judge；技能读取不等于执行成功。
 评分使用稳定 ID 写回，版本为 offline-rules-v4。同样 manifest 重跑不会重复计分。
 
+## 独立模型评估
+
+`scripts.evaluate_llm` 直接从 Langfuse 读取已完成请求，用模型评估当前轮的用户请求、回答、
+历史上下文和原生工具输入输出。manifest 只提供 trace ID 和可选参考要求；不使用其中缓存的回答。
+服务代码及请求链路不参与评估，也不重跑 Agent。
+
+```powershell
+# 调用模型生成评估报告，暂不写回；也会保存模型结果缓存
+uv run python -m scripts.evaluate_llm --manifest artifacts/smoke-demo-001.json --dry-run
+# 使用已验证的缓存结果，写回 Agent 根 observation 的 Scores
+uv run python -m scripts.evaluate_llm --manifest artifacts/smoke-demo-001.json
+uv run python -m scripts.verify_evaluation --report artifacts/llm-evaluation-smoke-demo-001.json --check-metrics
+uv run python -m scripts.configure_dashboard
+# 也可直接评估现有 trace，无需 manifest 或参考答案
+uv run python -m scripts.evaluate_llm --trace-id YOUR_TRACE_ID
+```
+
+默认复用 `.env` 的 `MODEL_*`；可通过 `JUDGE_MODEL_NAME`、`JUDGE_MODEL_BASE_URL`、
+`JUDGE_MODEL_API_KEY` 分别覆盖。judge 调用不接 Agent 的 Langfuse callback，因此不混入线上模型用量。
+评估模型的 Token 用量保存在本地缓存和分数 metadata 中。
+
+| 分数名称 | 含义 |
+| --- | --- |
+| `llm_task_success` | 是否完成用户实际目标，合理拒绝无效输入也可以满分 |
+| `llm_correctness` | 回答及计算是否有输入、历史或工具证据支持 |
+| `llm_instruction_following` | 是否遵循用户约束及适用技能指令、保留原始输入 |
+
+均为 0～1 分，越高越好；每项中文评分依据写入 score comment。
+评分标准、结构校验和证据提取位于 `evaluators/llm.py`。模型输出缺项、非数字或越界时终止；
+全部请求评估通过后才写回。证据超过 `--max-input-chars`（默认 120000）时明确报错，不静默截断。
+
+结果缓存位于 `artifacts/llm-judge-cache`；相同 trace、证据、参考要求、模型及评估标准生成稳定 ID，
+重跑复用缓存且不会增加重复评分。`--refresh` 重新调用模型并覆盖同一组分数；修改模型或评估标准会生成
+新的评估记录，此时看板同名指标会包含这些记录。缓存和报告不提交 Git。
+
+看板新增模型评估的均分、均分趋势和各指标样本数，单独展示 `llm_*`；原规则评估卡片仍保留。
+趋势按 Agent 请求发生时间聚合，样本数只表示已评估请求。模型评分是启发式判断；POC 默认使用
+同一个模型执行和评估，后续可替换独立 judge 模型并用人工标注校准。
+
 ## 检查
 
 ```powershell
