@@ -8,7 +8,9 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from evaluators.langfuse_data import api_client, scores
+from langfuse import get_client
+
+from evaluators.langfuse_data import scores
 
 
 def main():
@@ -24,15 +26,15 @@ def main():
     trace_ids = {s["trace_id"] for s in expected}
     expected_by_id = {s["score_id"]: s for s in expected}
     deadline = time.monotonic() + 60
-    with api_client() as api:
-        while True:
-            actual = [score for trace_id in trace_ids for score in scores(api, trace_id)]
-            by_id = {s["id"]: s for s in actual}
-            if expected_by_id.keys() <= by_id.keys():
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Offline scores not visible in Langfuse")
-            time.sleep(2)
+    api = get_client().api
+    while True:
+        actual = [score for trace_id in trace_ids for score in scores(api, trace_id)]
+        by_id = {s["id"]: s for s in actual}
+        if expected_by_id.keys() <= by_id.keys():
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Offline scores not visible in Langfuse")
+        time.sleep(2)
     assert len(expected_by_id) == len(expected), "Duplicate score IDs in report"
     assert sum(s["id"] in expected_by_id for s in actual) == len(expected), "Duplicate scores"
     for score_id, item in expected_by_id.items():
@@ -77,10 +79,7 @@ def main():
             "timeDimension": None,
             "config": {"row_limit": 100},
         }
-        with api_client() as api:
-            response = api.get("/api/public/v2/metrics", params={"query": json.dumps(query)})
-            response.raise_for_status()
-            metrics = response.json()["data"]
+        metrics = api.metrics.metrics(query=json.dumps(query)).data
         assert {r["name"] for r in metrics} == set(grouped)
         for row in metrics:
             values = grouped[row["name"]]

@@ -1,11 +1,9 @@
 """Public API reader shared by offline evaluation and its integration checks."""
 
 import json
-import os
 import time
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,15 +15,6 @@ ONLINE_SCORE_NAMES = [
 ]
 
 
-def api_client():
-    return httpx.Client(
-        base_url=os.environ["LANGFUSE_BASE_URL"],
-        auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
-        timeout=30,
-        trust_env=False,
-    )
-
-
 def json_object(value):
     if isinstance(value, str):
         value = json.loads(value)
@@ -34,32 +23,23 @@ def json_object(value):
     return value
 
 
-def observations(client, trace_id):
+def _trace_rows(fetch_page, trace_id, fields):
     rows = []
-    params = {"traceId": trace_id, "limit": 100, "fields": "basic,io,metadata,time,usage"}
+    cursor = None
     while True:
-        response = client.get("/api/public/v2/observations", params=params)
-        response.raise_for_status()
-        page = response.json()
-        rows.extend(page["data"])
-        cursor = page.get("meta", {}).get("cursor")
+        page = fetch_page(trace_id=trace_id, fields=fields, limit=100, cursor=cursor)
+        rows.extend(row.model_dump(mode="json") for row in page.data)
+        cursor = page.meta.cursor
         if not cursor:
             return rows
-        params["cursor"] = cursor
 
 
-def scores(client, trace_id):
-    rows = []
-    params = {"traceId": trace_id, "limit": 100, "fields": "core,subject,details"}
-    while True:
-        response = client.get("/api/public/v3/scores", params=params)
-        response.raise_for_status()
-        page = response.json()
-        rows.extend(page["data"])
-        cursor = page.get("meta", {}).get("cursor")
-        if not cursor:
-            return rows
-        params["cursor"] = cursor
+def observations(api, trace_id):
+    return _trace_rows(api.observations.get_many, trace_id, "basic,io,metadata,time,usage")
+
+
+def scores(api, trace_id):
+    return _trace_rows(api.scores_v3.get_many_v3, trace_id, "core,subject,details")
 
 
 def answer_from_trace(root):

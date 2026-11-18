@@ -12,7 +12,6 @@ from langfuse import get_client
 from evaluators.langfuse_data import (
     ROOT,
     answer_from_trace,
-    api_client,
     completed_trace,
     skill_calls,
 )
@@ -59,26 +58,26 @@ def main():
     report = []
     # Read/validate every input before submitting any scores. Answers and skill
     # outputs always come from Langfuse, never from the local smoke response.
-    with api_client() as api:
-        for case in manifest:
-            trace_id = case["response"]["trace_id"]
-            reference = case["reference"]
-            root, rows = completed_trace(api, trace_id)
-            for observation, name, value in evaluate_observations(root, rows, reference):
-                report.append(
-                    {
-                        "score_id": score_identity(trace_id, observation["id"], name, reference),
-                        "trace_id": trace_id,
-                        "observation_id": observation["id"],
-                        "name": name,
-                        "value": value,
-                        "data_type": "NUMERIC",
-                        "timestamp": observation["startTime"],
-                        "environment": observation.get("environment", "default"),
-                        "comment": "Offline deterministic reference checks; quality is substring match fraction, not LLM judge.",
-                        "metadata": {"evaluator": EVALUATOR_VERSION, "reference": reference},
-                    }
-                )
+    api = get_client().api
+    for case in manifest:
+        trace_id = case["response"]["trace_id"]
+        reference = case["reference"]
+        root, rows = completed_trace(api, trace_id)
+        for observation, name, value in evaluate_observations(root, rows, reference):
+            report.append(
+                {
+                    "score_id": score_identity(trace_id, observation["id"], name, reference),
+                    "trace_id": trace_id,
+                    "observation_id": observation["id"],
+                    "name": name,
+                    "value": value,
+                    "data_type": "NUMERIC",
+                    "timestamp": observation["startTime"],
+                    "environment": observation.get("environment", "default"),
+                    "comment": "Offline deterministic reference checks; quality is substring match fraction, not LLM judge.",
+                    "metadata": {"evaluator": EVALUATOR_VERSION, "reference": reference},
+                }
+            )
     if not args.dry_run:
         client = get_client()
         try:

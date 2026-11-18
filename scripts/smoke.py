@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from langfuse import get_client
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,32 +94,31 @@ def main():
     # Operational metrics come from Langfuse, never from hand-built SSE fields.
     from evaluators.langfuse_data import (
         answer_from_trace,
-        api_client,
         completed_trace,
         scores,
         skill_calls,
     )
 
-    with api_client() as api:
-        for row in results:
-            trace_id = row["response"]["trace_id"]
-            root, observations = completed_trace(api, trace_id)
-            generations = [r for r in observations if r["type"] == "GENERATION"]
-            triggers = skill_calls(root, observations)
-            total_tokens = sum(r.get("totalUsage") or 0 for r in generations)
-            assert total_tokens > 0, "Langfuse callback model usage missing"
-            row["response"]["answer"] = answer_from_trace(root)
-            assert row["response"]["answer"]
-            expected = row["reference"].get("expected_skill")
-            if expected:
-                assert any(r["name"] == expected for r in triggers)
-            if args.assert_unscored:
-                assert not scores(api, trace_id), "Serving unexpectedly wrote scores"
-            row["telemetry"] = {
-                "total_tokens": total_tokens,
-                "model_calls": len(generations),
-                "skill_triggers": len(triggers),
-            }
+    api = get_client().api
+    for row in results:
+        trace_id = row["response"]["trace_id"]
+        root, observations = completed_trace(api, trace_id)
+        generations = [r for r in observations if r["type"] == "GENERATION"]
+        triggers = skill_calls(root, observations)
+        total_tokens = sum(r.get("totalUsage") or 0 for r in generations)
+        assert total_tokens > 0, "Langfuse callback model usage missing"
+        row["response"]["answer"] = answer_from_trace(root)
+        assert row["response"]["answer"]
+        expected = row["reference"].get("expected_skill")
+        if expected:
+            assert any(r["name"] == expected for r in triggers)
+        if args.assert_unscored:
+            assert not scores(api, trace_id), "Serving unexpectedly wrote scores"
+        row["telemetry"] = {
+            "total_tokens": total_tokens,
+            "model_calls": len(generations),
+            "skill_triggers": len(triggers),
+        }
     (ROOT / "artifacts").mkdir(exist_ok=True)
     (ROOT / "artifacts" / f"smoke-{run}.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"

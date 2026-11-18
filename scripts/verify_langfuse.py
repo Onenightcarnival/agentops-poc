@@ -1,17 +1,11 @@
 """Read back actual ingested observations and aggregate metrics through public v2 APIs."""
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
-import httpx
-from dotenv import load_dotenv
+from langfuse import get_client
 
-from evaluators.langfuse_data import ONLINE_SCORE_NAMES
-
-ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
+from evaluators.langfuse_data import ONLINE_SCORE_NAMES, ROOT
 
 
 def main():
@@ -119,67 +113,47 @@ def main():
         "dimensions": [{"field": "name"}, {"field": "source"}],
         "filters": [f for f in queries["online_scores"]["filters"] if f["column"] != "source"],
     }
-    with httpx.Client(
-        base_url=os.environ["LANGFUSE_BASE_URL"],
-        auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
-        timeout=30,
-        trust_env=False,
-    ) as client:
-        report = {}
-        for name, query in queries.items():
-            response = client.get(
-                "/api/public/v2/metrics", params={"query": json.dumps({**common, **query})}
-            )
-            if response.is_error:
-                raise RuntimeError(f"{name}: {response.status_code} {response.text[:1000]}")
-            report[name] = response.json()["data"]
-        for label, name in [
-            ("requests", "agentops.chat"),
-        ]:
-            response = client.get(
-                "/api/public/v2/observations",
-                params={
-                    "name": name,
-                    "limit": 100,
-                    "fields": "basic,metadata,usage",
-                    "fromStartTime": common["fromTimestamp"],
-                },
-            )
-            response.raise_for_status()
-            report[label] = [
-                {
-                    k: row.get(k)
-                    for k in ("id", "traceId", "name", "userId", "sessionId", "level", "metadata")
-                }
-                for row in response.json()["data"]
-            ]
-        (ROOT / "artifacts" / "langfuse-verification.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    api = get_client().api
+    report = {
+        name: api.metrics.metrics(query=json.dumps({**common, **query})).data
+        for name, query in queries.items()
+    }
+    requests = api.observations.get_many(
+        name="agentops.chat",
+        limit=100,
+        fields="basic,metadata,usage",
+        from_start_time=now - timedelta(days=7),
+    )
+    report["requests"] = [
+        {
+            key: row.get(key)
+            for key in ("id", "traceId", "name", "userId", "sessionId", "level", "metadata")
+        }
+        for row in (item.model_dump(mode="json") for item in requests.data)
+    ]
+    (ROOT / "artifacts" / "langfuse-verification.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {k: v for k, v in report.items() if k not in ("requests", "skill_order", "skill_text")},
+            ensure_ascii=False,
+            indent=2,
         )
-        print(
-            json.dumps(
-                {
-                    k: v
-                    for k, v in report.items()
-                    if k not in ("requests", "skill_order", "skill_text")
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        print("requests", len(report["requests"]))
-        assert len(report["user_usage"]) >= 3, "three users not ingested yet"
-        assert all(r["userId"] for r in report["requests"]), "root user attribution missing"
-        assert report["tool_calls"], "native tool observations missing"
-        assert report["skill_triggers"], "SKILL trigger events missing"
-        assert any(r["name"] == "task_success" for r in report["scores"]), "scores missing"
-        assert {r["name"] for r in report["online_scores"]} == set(ONLINE_SCORE_NAMES), (
-            "native model evaluation metrics missing"
-        )
-        assert all(r["source"] == "EVAL" for r in report["online_score_sources"]), (
-            "Reserved online_* score names contain non-EVAL scores; dashboard would mix sources"
-        )
-        print("PASS: Langfuse ingested users, token usage, native tool counts and Agent scores")
+    )
+    print("requests", len(report["requests"]))
+    assert len(report["user_usage"]) >= 3, "three users not ingested yet"
+    assert all(r["userId"] for r in report["requests"]), "root user attribution missing"
+    assert report["tool_calls"], "native tool observations missing"
+    assert report["skill_triggers"], "SKILL trigger events missing"
+    assert any(r["name"] == "task_success" for r in report["scores"]), "scores missing"
+    assert {r["name"] for r in report["online_scores"]} == set(ONLINE_SCORE_NAMES), (
+        "native model evaluation metrics missing"
+    )
+    assert all(r["source"] == "EVAL" for r in report["online_score_sources"]), (
+        "Reserved online_* score names contain non-EVAL scores; dashboard would mix sources"
+    )
+    print("PASS: Langfuse ingested users, token usage, native tool counts and Agent scores")
 
 
 if __name__ == "__main__":

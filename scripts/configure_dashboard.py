@@ -1,17 +1,21 @@
 """Configure usage, skill trigger counts and Agent-only evaluation cards."""
 
 import json
-import os
-from pathlib import Path
 
-import httpx
-from dotenv import load_dotenv
+from langfuse import get_client
+from langfuse.api.unstable.dashboards.types import CreateDashboardPlacementRequest_Widget
 
-from evaluators.langfuse_data import ONLINE_SCORE_NAMES
+from evaluators.langfuse_data import ONLINE_SCORE_NAMES, ROOT
 
-ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
 DASHBOARD_ID = "cmwk7cpv80009rm07f8ib2kc9"
+
+
+def list_widgets(client):
+    first = client.list()
+    widgets = list(first.data)
+    for number in range(2, first.meta.total_pages + 1):
+        widgets.extend(client.list(page=number).data)
+    return widgets
 
 
 def main():
@@ -55,8 +59,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "value", "agg": "avg"}],
             "filters": online_filter,
-            "chartType": "HORIZONTAL_BAR",
-            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+            "chart_type": "HORIZONTAL_BAR",
+            "chart_config": {"type": "HORIZONTAL_BAR", "row_limit": 20},
         },
         {
             "name": "Langfuse 自动评估 · 均分趋势",
@@ -65,8 +69,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "value", "agg": "avg"}],
             "filters": online_filter,
-            "chartType": "LINE_TIME_SERIES",
-            "chartConfig": {"type": "LINE_TIME_SERIES"},
+            "chart_type": "LINE_TIME_SERIES",
+            "chart_config": {"type": "LINE_TIME_SERIES"},
         },
         {
             "name": "Langfuse 自动评估 · 样本数",
@@ -75,8 +79,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "agg": "count"}],
             "filters": online_filter,
-            "chartType": "HORIZONTAL_BAR",
-            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+            "chart_type": "HORIZONTAL_BAR",
+            "chart_config": {"type": "HORIZONTAL_BAR", "row_limit": 20},
         },
         {
             "name": "SKILL 调用次数 · Top 20",
@@ -85,8 +89,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "agg": "count"}],
             "filters": skill_filter,
-            "chartType": "HORIZONTAL_BAR",
-            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+            "chart_type": "HORIZONTAL_BAR",
+            "chart_config": {"type": "HORIZONTAL_BAR", "row_limit": 20},
         },
         {
             "name": "SKILL 调用次数 · 趋势",
@@ -95,8 +99,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "agg": "count"}],
             "filters": skill_filter,
-            "chartType": "LINE_TIME_SERIES",
-            "chartConfig": {"type": "LINE_TIME_SERIES"},
+            "chart_type": "LINE_TIME_SERIES",
+            "chart_config": {"type": "LINE_TIME_SERIES"},
         },
         {
             "name": "用户 Token 用量 · 按用户",
@@ -105,8 +109,8 @@ def main():
             "dimensions": [{"field": "userId"}],
             "metrics": [{"measure": "totalTokens", "agg": "sum"}],
             "filters": generation,
-            "chartType": "HORIZONTAL_BAR",
-            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+            "chart_type": "HORIZONTAL_BAR",
+            "chart_config": {"type": "HORIZONTAL_BAR", "row_limit": 20},
         },
         {
             "name": "原生工具调用次数 · 按工具",
@@ -115,8 +119,8 @@ def main():
             "dimensions": [{"field": "name"}],
             "metrics": [{"measure": "count", "agg": "count"}],
             "filters": tool_filter,
-            "chartType": "HORIZONTAL_BAR",
-            "chartConfig": {"type": "HORIZONTAL_BAR", "row_limit": 20},
+            "chart_type": "HORIZONTAL_BAR",
+            "chart_config": {"type": "HORIZONTAL_BAR", "row_limit": 20},
         },
         {
             "name": "Agent 评估 · 各指标均值趋势",
@@ -132,115 +136,98 @@ def main():
                     "type": "stringOptions",
                 }
             ],
-            "chartType": "LINE_TIME_SERIES",
-            "chartConfig": {"type": "LINE_TIME_SERIES"},
+            "chart_type": "LINE_TIME_SERIES",
+            "chart_config": {"type": "LINE_TIME_SERIES"},
         },
     ]
-    with httpx.Client(
-        base_url=os.environ["LANGFUSE_BASE_URL"],
-        auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
-        timeout=30,
-        trust_env=False,
-    ) as client:
+    api = get_client().api.unstable
+    existing = list_widgets(api.dashboard_widgets)
+    by_name = {w.name: w for w in existing}
+    # The retired pilot card is still accessible in the 4.16 widget editor.
+    pilot = by_name.get("Langfuse 自动评估 · 任务完成度")
+    if pilot:
+        api.dashboard_widgets.update(
+            pilot.id,
+            filters=[f for f in pilot.filters if f.column != "source"],
+            description="试点历史卡片：按 online_task_success 专用指标名统计任务完成度，0～1，越高越好。",
+        )
+    added = []
+    for definition in definitions:
+        old = by_name.get(definition["name"])
+        widget = (
+            api.dashboard_widgets.update(old.id, **definition)
+            if old
+            else api.dashboard_widgets.create(**definition)
+        )
+        added.append(widget)
+    dashboard = api.dashboards.get(DASHBOARD_ID)
+    obsolete_names = {
+        "SKILL 耗时 · P95",
+        "Langfuse 自动评估 · 任务完成度",
+        "Agent 模型评估 · 指标均分",
+        "Agent 模型评估 · 均分趋势",
+        "Agent 模型评估 · 各指标样本数",
+    }
+    id_to_name = {w.id: w.name for w in [*existing, *added]}
 
-        def call(method, path, **kwargs):
-            response = client.request(method, "/api/public/unstable/" + path, **kwargs)
-            if response.is_error:
-                raise RuntimeError(f"{response.status_code}: {response.text[:1000]}")
-            return response.json()
+    def label(placement):
+        if placement.type == "preset":
+            return placement.preset_id
+        return id_to_name[placement.widget_id]
 
-        existing = call("GET", "dashboard-widgets")["data"]
-        # The 4.16 editor cannot render Score Source, although Metrics API accepts it.
-        # Also repair the retired pilot card, which remains accessible in Widgets.
-        for widget in existing:
-            if widget["name"] == "Langfuse 自动评估 · 任务完成度":
-                call(
-                    "PATCH",
-                    f"dashboard-widgets/{widget['id']}",
-                    json={
-                        "filters": [f for f in widget["filters"] if f["column"] != "source"],
-                        "description": "试点历史卡片：按 online_task_success 专用指标名统计任务完成度，0～1，越高越好。",
-                    },
+    placements = [
+        p
+        for p in dashboard.definition.widgets
+        if label(p) not in obsolete_names and label(p) != "home-chart-scores"
+    ]
+    placed_ids = {p.widget_id for p in placements if p.type == "widget"}
+    for widget in added:
+        if widget.id not in placed_ids:
+            placements.append(
+                api.dashboards.add_placement(
+                    DASHBOARD_ID,
+                    request=CreateDashboardPlacementRequest_Widget(
+                        type="widget", widget_id=widget.id
+                    ),
                 )
-        by_name = {w["name"]: w for w in existing}
-        added = []
-        for definition in definitions:
-            old = by_name.get(definition["name"])
-            widget = (
-                call("PATCH", f"dashboard-widgets/{old['id']}", json=definition)
-                if old
-                else call("POST", "dashboard-widgets", json=definition)
             )
-            added.append(widget)
-        dashboard = call("GET", f"dashboards/{DASHBOARD_ID}")
-        placements = dashboard["definition"]["widgets"]
-        # Remove obsolete skill timing and the unfiltered preset exposing old skill scores.
-        obsolete_names = {
-            "SKILL 耗时 · P95",
-            "Langfuse 自动评估 · 任务完成度",
-            "Agent 模型评估 · 指标均分",
-            "Agent 模型评估 · 均分趋势",
-            "Agent 模型评估 · 各指标样本数",
-        }
-        obsolete = {w["id"] for w in existing if w["name"] in obsolete_names}
-        placements = [
-            p
-            for p in placements
-            if p.get("widgetId") not in obsolete and p.get("presetId") != "home-chart-scores"
-        ]
-        for widget in added:
-            if not any(p.get("widgetId") == widget["id"] for p in placements):
-                placements.append(
-                    call(
-                        "POST",
-                        f"dashboards/{DASHBOARD_ID}/placements",
-                        json={"type": "widget", "widgetId": widget["id"]},
-                    )
-                )
-        all_widgets = existing + added
-        id_to_name = {w["id"]: w["name"] for w in all_widgets}
-        order = [
-            "Langfuse 自动评估 · 指标均分",
-            "Langfuse 自动评估 · 均分趋势",
-            "Langfuse 自动评估 · 样本数",
-            "SKILL 调用次数 · Top 20",
-            "SKILL 调用次数 · 趋势",
-            "用户 Token 用量 · 按用户",
-            "原生工具调用次数 · 按工具",
-            "模型调用次数 · 按模型",
-            "Agent 评估 · 各指标均值趋势",
-            "home-generation-latency",
-            "home-traces-obs-time-series",
-            "home-users",
-            "home-model-usage",
-            "home-model-costs",
-        ]
+    order = [
+        "Langfuse 自动评估 · 指标均分",
+        "Langfuse 自动评估 · 均分趋势",
+        "Langfuse 自动评估 · 样本数",
+        "SKILL 调用次数 · Top 20",
+        "SKILL 调用次数 · 趋势",
+        "用户 Token 用量 · 按用户",
+        "原生工具调用次数 · 按工具",
+        "模型调用次数 · 按模型",
+        "Agent 评估 · 各指标均值趋势",
+        "home-generation-latency",
+        "home-traces-obs-time-series",
+        "home-users",
+        "home-model-usage",
+        "home-model-costs",
+    ]
 
-        def rank(p):
-            label = p.get("presetId") or id_to_name[p["widgetId"]]
-            return order.index(label) if label in order else len(order)
-
-        placements.sort(key=rank)
-        for i, placement in enumerate(placements):
-            placement.update(x=(i % 2) * 6, y=(i // 2) * 4, width=6, height=4)
-        saved = call(
-            "PATCH",
-            f"dashboards/{DASHBOARD_ID}",
-            json={
-                "description": "DeepAgents 0.6.2 原生Agent：Langfuse自动模型评估及独立规则评估、SKILL触发次数、用户Token、模型与工具调用。SKILL只计次数。",
-                "definition": {"widgets": placements},
-            },
-        )
-        (ROOT / "artifacts").mkdir(exist_ok=True)
-        (ROOT / "artifacts" / "dashboard-config.json").write_text(
-            json.dumps(
-                {"dashboard": saved, "widgets": call("GET", "dashboard-widgets")["data"]},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print(f"Saved {len(placements)} dashboard cards")
+    priority = {name: i for i, name in enumerate(order)}
+    placements.sort(key=lambda p: priority.get(label(p), len(order)))
+    layout = [
+        p.model_copy(update={"x": (i % 2) * 6, "y": (i // 2) * 4, "width": 6, "height": 4})
+        for i, p in enumerate(placements)
+    ]
+    saved = api.dashboards.update(
+        DASHBOARD_ID,
+        description="DeepAgents 0.6.2 原生Agent：Langfuse自动模型评估及独立规则评估、SKILL触发次数、用户Token、模型与工具调用。SKILL只计次数。",
+        definition=dashboard.definition.model_copy(update={"widgets": layout}),
+    )
+    (ROOT / "artifacts").mkdir(exist_ok=True)
+    snapshot = {
+        "dashboard": saved.model_dump(mode="json"),
+        "widgets": [w.model_dump(mode="json") for w in list_widgets(api.dashboard_widgets)],
+    }
+    (ROOT / "artifacts" / "dashboard-config.json").write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"Saved {len(layout)} dashboard cards")
 
 
 if __name__ == "__main__":
