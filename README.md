@@ -60,6 +60,8 @@ CallbackHandler 只扩展 `on_tool_start`：先调用官方实现创建工具 sp
 middleware 入口处尚未创建 read_file span，因此 EVENT 在 `on_tool_start` 中、官方 handler
 创建并激活工具 span 后写入，自动成为该 read_file 的子节点。无需读取 SDK 私有字段或手动指定 trace/parent ID。
 `tool_call_id` 防止标记被嵌套调用误用，并用于父子关系核对。事件只记录触发时点及识别元数据。
+技能作者可以在 SKILL.md 的 YAML 头部填写 `metadata.id` 和 `metadata.version`。
+新 EVENT 会将已填写的值分别记录为 `skill_id` 和 `skill_version`。ID 可跨改名保留，版本由技能作者维护。
 
 口径是**每次请求读取已发现的技能文档计 1 次**：重复读取计多次，读取失败也计触发，
 复用会话中已有指令不额外计数；不统计技能执行耗时或成功率。

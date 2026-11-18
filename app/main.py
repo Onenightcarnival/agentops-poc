@@ -49,12 +49,14 @@ async def skill_triggers(request, handler):
             None,
         )
         if skill is not None:
+            metadata = skill.get("metadata", {})
             request.runtime.config["metadata"] = {
                 **request.runtime.config.get("metadata", {}),
                 "skill_trigger": {
                     "kind": "skill_trigger",
                     "skill_name": skill["name"],
                     "skill_path": skill["path"],
+                    **{f"skill_{k}": metadata[k] for k in ("id", "version") if metadata.get(k)},
                     "tool_call_id": call["id"],
                     "instrumentation": "skill-trigger-v3",
                 },

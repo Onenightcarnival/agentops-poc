@@ -1,5 +1,8 @@
 ---
 name: order-total
+metadata:
+  id: agentops.order-total
+  version: "1.0.0"
 description: Review order quantities and calculate a small order total, reporting CNY with two decimal places.
 ---
 

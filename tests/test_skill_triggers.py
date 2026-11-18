@@ -172,6 +172,10 @@ def test_native_parallel_reads_repeats_and_concurrent_requests(telemetry):
     traces = asyncio.run(execute())
     events = events_and_parents(exporter)
     assert len(events) == 6
+    for event in events:
+        name = event.name.removeprefix("skill:")
+        assert event.attributes["langfuse.observation.metadata.skill_id"] == f"agentops.{name}"
+        assert event.attributes["langfuse.observation.metadata.skill_version"] == "1.0.0"
     for trace_id in traces:
         assert sum(e.context.trace_id == trace_id for e in events) == 3
     ordinary = [s for s in exporter.get_finished_spans() if s.name == "ls"]

@@ -1,5 +1,8 @@
 ---
 name: text-digest
+metadata:
+  id: agentops.text-digest
+  version: "1.0.0"
 description: Count characters and whitespace-separated words in a supplied text.
 ---
 
