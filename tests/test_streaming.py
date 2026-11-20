@@ -47,7 +47,7 @@ def context(monkeypatch):
             states.append("closed")
 
     monkeypatch.setattr(serving, "propagate_attributes", propagate)
-    monkeypatch.setattr(serving, "CallbackHandler", lambda **kwargs: kwargs)
+    monkeypatch.setattr(serving, "SkillTriggerCallbackHandler", lambda **kwargs: kwargs)
     return states
 
 
@@ -62,7 +62,10 @@ def test_raw_native_chunks_only_and_identity_isolation(monkeypatch):
         )
         chunks = [json.loads(chunk) async for chunk in response.body_iterator]
         assert agent.configs[-1]["callbacks"] == [
-            {"trace_context": {"trace_id": response.headers["x-langfuse-trace-id"]}}
+            {
+                "event_client": serving.langfuse,
+                "trace_context": {"trace_id": response.headers["x-langfuse-trace-id"]},
+            }
         ]
         return chunks
 

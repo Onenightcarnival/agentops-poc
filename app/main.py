@@ -16,8 +16,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from langchain.agents.middleware import wrap_tool_call
 from langchain_openai import ChatOpenAI
-from langfuse import get_client, propagate_attributes
-from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+from langfuse import Langfuse, get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,13 +26,17 @@ load_dotenv(ROOT / ".env")
 langfuse = get_client()
 
 
-class CallbackHandler(LangfuseCallbackHandler):
+class SkillTriggerCallbackHandler(CallbackHandler):
+    def __init__(self, *, event_client: Langfuse, **kwargs):
+        super().__init__(**kwargs)
+        self.event_client = event_client
+
     def on_tool_start(self, *args, **kwargs):
         super().on_tool_start(*args, **kwargs)
         trigger = (kwargs.get("metadata") or {}).get("skill_trigger")
         if trigger and trigger["tool_call_id"] == kwargs.get("tool_call_id"):
             # The official handler has just activated this read_file observation.
-            langfuse.create_event(name=f"skill:{trigger['skill_name']}", metadata=trigger)
+            self.event_client.create_event(name=f"skill:{trigger['skill_name']}", metadata=trigger)
 
 
 @wrap_tool_call
@@ -117,7 +121,11 @@ async def chat(body: ChatRequest, request: Request):
                 {"messages": [{"role": "user", "content": body.message}]},
                 config={
                     "configurable": {"thread_id": json.dumps([body.user_id, body.session_id])},
-                    "callbacks": [CallbackHandler(trace_context={"trace_id": trace_id})],
+                    "callbacks": [
+                        SkillTriggerCallbackHandler(
+                            event_client=langfuse, trace_context={"trace_id": trace_id}
+                        )
+                    ],
                     "run_name": "agentops.chat",
                     "recursion_limit": 32,
                 },

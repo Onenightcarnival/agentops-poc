@@ -38,7 +38,7 @@ uv run --locked python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 ## Langfuse 接入
 
 请求链路使用 `get_client()`、Langfuse `CallbackHandler` 和一处 `with propagate_attributes(...)`。
-CallbackHandler 只扩展 `on_tool_start`：先调用官方实现创建工具 span，再为带 SKILL 标记的调用写入一次 EVENT。
+项目的 `SkillTriggerCallbackHandler` 继承 SDK 的 `CallbackHandler`，在 `on_tool_start` 中先调用官方实现创建工具 span，再为带 SKILL 标记的调用写入一次 EVENT。
 没有手工 span.update、评分、ContextVar 或自定义 trace 生命周期。
 根 Agent 输入输出、模型用量、原生工具调用及错误均由 callback 自动记录。
 `get_client()` 用于 SDK 生命周期管理及本地 flush 辅助接口。

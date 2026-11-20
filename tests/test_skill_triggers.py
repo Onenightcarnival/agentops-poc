@@ -17,7 +17,7 @@ import app.main as serving
 
 
 @pytest.fixture
-def telemetry(monkeypatch):
+def telemetry():
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -28,8 +28,7 @@ def telemetry(monkeypatch):
         tracer_provider=provider,
         should_export_span=lambda span: False,
     )
-    monkeypatch.setattr(serving, "langfuse", client)
-    yield exporter, key
+    yield exporter, client, key
     client.shutdown()
 
 
@@ -68,8 +67,8 @@ def request(callback, *, path="/skills/order-total/SKILL.md", discovered=True):
 
 @pytest.mark.parametrize("error", [None, ValueError("read failed"), asyncio.CancelledError()])
 def test_event_is_inside_native_tool_even_on_error_or_cancel(telemetry, error):
-    exporter, key = telemetry
-    req = request(serving.CallbackHandler(public_key=key))
+    exporter, client, key = telemetry
+    req = request(serving.SkillTriggerCallbackHandler(event_client=client, public_key=key))
 
     async def read_file(file_path: str):
         # Event exists before the native implementation runs.
@@ -104,8 +103,12 @@ def test_event_is_inside_native_tool_even_on_error_or_cancel(telemetry, error):
     ],
 )
 def test_unregistered_reads_do_not_add_metadata(telemetry, path, discovered):
-    exporter, key = telemetry
-    req = request(serving.CallbackHandler(public_key=key), path=path, discovered=discovered)
+    exporter, client, key = telemetry
+    req = request(
+        serving.SkillTriggerCallbackHandler(event_client=client, public_key=key),
+        path=path,
+        discovered=discovered,
+    )
     response = object()
 
     async def handler(actual):
@@ -125,7 +128,7 @@ class NativeModel(GenericFakeChatModel):
 
 
 def test_native_parallel_reads_repeats_and_concurrent_requests(telemetry):
-    exporter, key = telemetry
+    exporter, client, key = telemetry
 
     async def run():
         calls = [
@@ -155,7 +158,9 @@ def test_native_parallel_reads_repeats_and_concurrent_requests(telemetry):
             {"messages": [{"role": "user", "content": "read skills"}]},
             config={
                 "callbacks": [
-                    serving.CallbackHandler(public_key=key, trace_context={"trace_id": trace_id})
+                    serving.SkillTriggerCallbackHandler(
+                        event_client=client, public_key=key, trace_context={"trace_id": trace_id}
+                    )
                 ]
             },
         )
