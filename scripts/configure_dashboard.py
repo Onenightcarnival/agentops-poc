@@ -3,6 +3,7 @@
 import json
 
 from langfuse import get_client
+from langfuse.api.unstable.dashboard_widgets.types import CreateDashboardWidgetRequest
 from langfuse.api.unstable.dashboards.types import CreateDashboardPlacementRequest_Widget
 
 from evaluators.langfuse_data import ONLINE_SCORE_NAMES, ROOT
@@ -152,12 +153,14 @@ def main():
             description="试点历史卡片：按 online_task_success 专用指标名统计任务完成度，0～1，越高越好。",
         )
     added = []
-    for definition in definitions:
-        old = by_name.get(definition["name"])
+    for config in definitions:
+        definition = CreateDashboardWidgetRequest.model_validate(config)
+        old = by_name.get(definition.name)
+        fields = definition.model_dump(by_alias=False, exclude_unset=True)
         widget = (
-            api.dashboard_widgets.update(old.id, **definition)
+            api.dashboard_widgets.update(old.id, **fields)
             if old
-            else api.dashboard_widgets.create(**definition)
+            else api.dashboard_widgets.create(**fields)
         )
         added.append(widget)
     dashboard = api.dashboards.get(DASHBOARD_ID)
