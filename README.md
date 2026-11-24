@@ -15,7 +15,7 @@ uv run --locked python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 当前机器 uv 也可通过 `& "$env:APPDATA\Python\Scripts\uv.exe"` 调用。
 
 - [接口文档](http://127.0.0.1:18080/docs)
-- [运营看板](http://localhost:13000/project/cmwk7bi2e0006rm07849pgu6a/dashboards/cmwk7cpv80009rm07f8ib2kc9?dateRange=7d)
+- [运营看板](http://localhost:18082/project/cmwk7bi2e0006rm07849pgu6a/dashboards/cmwk7cpv80009rm07f8ib2kc9?dateRange=7d)
 
 ## 原生流式响应
 
@@ -115,7 +115,7 @@ Agent 服务不执行评分，也不需要本地批量调用模型的脚本。
 提示词要求只评估当前轮最终回答，历史仅供参考，不把读取 SKILL 当作执行成功。
 均为 Numeric 0～1 分，中文评分依据写入 score comment，来源为 `EVAL`，关联实际 Agent 根节点。
 任务配置、提示词和默认模型均在
-[Langfuse Evaluators](http://localhost:13000/project/cmwk7bi2e0006rm07849pgu6a/evals) 管理。
+[Langfuse Evaluators](http://localhost:18082/project/cmwk7bi2e0006rm07849pgu6a/evals) 管理。
 
 ```powershell
 # 发送真实请求，Langfuse 在后台自动评分，不再单独运行模型评估脚本
